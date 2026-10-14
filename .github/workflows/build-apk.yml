@@ -1,0 +1,106 @@
+name: Build Unsaid v3 APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build Unsaid v3
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set Up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Find and Extract Project ZIP
+        shell: bash
+        run: |
+          set -e
+
+          echo "Searching for ZIP files..."
+          find . -type f -iname '*.zip' ! -path './.git/*'
+
+          ZIP_FILE="$(find . -type f -iname '*.zip' ! -path './.git/*' -print -quit)"
+
+          if [ -z "$ZIP_FILE" ]; then
+            echo "ERROR: No ZIP file found in the repository."
+            echo "Repository files:"
+            find . -maxdepth 4 -type f | head -100
+            exit 1
+          fi
+
+          echo "Found ZIP: $ZIP_FILE"
+
+          mkdir -p extracted
+          unzip -oq "$ZIP_FILE" -d extracted
+
+          echo "Searching for Android project..."
+
+          PROJECT_DIR="$(find extracted -type f -name settings.gradle -printf '%h\n' | head -n 1)"
+
+          if [ -z "$PROJECT_DIR" ]; then
+            echo "ERROR: settings.gradle not found inside the ZIP."
+            echo "Extracted files:"
+            find extracted -maxdepth 5 -type f | head -150
+            exit 1
+          fi
+
+          if [ ! -f "$PROJECT_DIR/app/build.gradle" ]; then
+            echo "ERROR: app/build.gradle not found."
+            exit 1
+          fi
+
+          if [ ! -f "$PROJECT_DIR/app/src/main/assets/index.html" ]; then
+            echo "ERROR: App HTML asset not found."
+            exit 1
+          fi
+
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+          echo "Android project found: $PROJECT_DIR"
+
+      - name: Set Up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Build Debug APK
+        run: |
+          set -e
+          echo "Building Unsaid v3..."
+          gradle -p "$PROJECT_DIR" assembleDebug --stacktrace
+
+      - name: Verify APK
+        shell: bash
+        run: |
+          set -e
+
+          APK_PATH="$PROJECT_DIR/app/build/outputs/apk/debug/app-debug.apk"
+
+          if [ ! -f "$APK_PATH" ]; then
+            echo "ERROR: APK was not generated."
+            exit 1
+          fi
+
+          echo "APK successfully generated."
+          ls -lh "$APK_PATH"
+
+      - name: Upload Unsaid v3 APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Unsaid-v3-APK
+          path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 7
